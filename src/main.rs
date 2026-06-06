@@ -7,16 +7,16 @@
 //! - AgentDB integration
 
 use arcadia::{
-    vector_index::{VectorIndex, VectorIndexConfig, SearchResult},
-    cache::{CacheManager, CacheConfig, EmbeddingCache},
+    vector_index::{VectorIndex, VectorIndexConfig},
+    cache::{CacheManager, CacheConfig},
     memory::MemoryManager,
-    metrics::{init_metrics, MetricsTimer, MetricsSnapshot},
-    agentdb::{AgentDbConfig, AgentDbManager},
+    metrics::init_metrics,
+    agentdb::{AgentDbConfig, AgentDbManager, AgentExperience},
 };
 use anyhow::Result;
 use std::collections::HashMap;
 use std::time::Instant;
-use tracing::{info, warn, error, debug};
+use tracing::{info, warn, debug};
 use tracing_subscriber;
 
 #[tokio::main]
@@ -54,10 +54,10 @@ async fn main() -> Result<()> {
     let vector_index = initialize_vector_index().await;
     
     // Initialize AgentDB
-    let agent_db = initialize_agentdb().await;
+    let mut agent_db = initialize_agentdb().await;
     
     // Run demonstrations
-    run_demonstrations(vector_index, &cache, &memory_manager, agent_db).await?;
+    run_demonstrations(vector_index, &cache, &memory_manager, &mut agent_db).await?;
     
     // Print final status
     print_status(vector_index.is_some(), agent_db.is_some());
@@ -125,14 +125,7 @@ async fn initialize_vector_index() -> Option<VectorIndex> {
 }
 
 async fn initialize_agentdb() -> Option<AgentDbManager> {
-    let config = AgentDbConfig {
-        db_name: "arcadia_agents".to_string(),
-        vector_dim: 1536,
-        max_memory_mb: 512,
-        replay_buffer_size: 10000,
-        wasm_enabled: false,
-        enable_compression: true,
-    };
+    let config = AgentDbConfig::default();
     
     match AgentDbManager::new(config).await {
         Ok(mut db) => {
@@ -153,7 +146,7 @@ async fn run_demonstrations(
     vector_index: Option<VectorIndex>,
     cache: &CacheManager<String, String>,
     memory_manager: &MemoryManager,
-    agent_db: Option<AgentDbManager>,
+    agent_db: &mut Option<AgentDbManager>,
 ) -> Result<()> {
     println!("\n{}", "═".repeat(70));
     println!("  ARCADIA Engine Demonstration");
@@ -277,9 +270,7 @@ async fn demonstrate_vector_indexing(index: VectorIndex) -> Result<()> {
         ("stealth_assassin", "A silent assassin using shadows and daggers for covert operations"),
         ("elemental_mage", "A powerful mage controlling fire, ice, and lightning elements"),
         ("forest_druid", "A nature-protecting druid with animal companions and healing powers"),
-        ("undead_necromancer", "A dark necromancer raising skeletons and casting curses"),
         ("dragon", "A mighty fire-breathing dragon guarding ancient treasure"),
-        ("goblin", "A sneaky goblin stealing gold from travelers"),
     ];
     
     println!("│ Indexing game concepts as vector embeddings...");
@@ -302,11 +293,9 @@ async fn demonstrate_vector_indexing(index: VectorIndex) -> Result<()> {
     
     // Semantic search queries
     let queries = vec![
-        ("Who can fight with swords?", 3),
-        ("What creatures breathe fire?", 2),
+        ("Who can fight with swords?", 2),
+        ("What creatures breathe fire?", 1),
         ("Who uses magic spells?", 2),
-        ("Who is stealthy and sneaky?", 2),
-        ("Nature protectors and healers", 2),
     ];
     
     println!("│ Semantic Search Results:                                    │");
@@ -321,12 +310,6 @@ async fn demonstrate_vector_indexing(index: VectorIndex) -> Result<()> {
                 println!("│     Search time: {:.2}ms", search_timer.elapsed().as_millis());
                 for (i, result) in results.iter().enumerate() {
                     println!("│     {}. {} (score: {:.4})", i + 1, result.id, result.score);
-                    let preview = if result.text.len() > 50 {
-                        format!("{}...", &result.text[..50])
-                    } else {
-                        result.text.clone()
-                    };
-                    println!("│        \"{}\"", preview);
                 }
             }
             Err(e) => println!("│     ✗ Search failed: {}", e),
@@ -339,14 +322,14 @@ async fn demonstrate_vector_indexing(index: VectorIndex) -> Result<()> {
     Ok(())
 }
 
-async fn demonstrate_agentdb(mut db: AgentDbManager) -> Result<()> {
+async fn demonstrate_agentdb(db: &mut AgentDbManager) -> Result<()> {
     println!("\n┌─ AgentDB Demonstration ─────────────────────────────────────┐");
     println!("│                                                             │");
     println!("│ AgentDB provides persistent learning and memory for AI agents│");
     println!("│                                                             │");
     
-    // Get database stats
-    let stats = db.get_stats().await;
+    // Get database stats (synchronous, no .await)
+    let stats = db.get_stats();
     println!("│ Database Statistics:                                       │");
     println!("│   Initialized: {}", stats.initialized);
     println!("│   Total Experiences: {}", stats.total_experiences);
@@ -354,8 +337,6 @@ async fn demonstrate_agentdb(mut db: AgentDbManager) -> Result<()> {
     println!("│                                                             │");
     
     // Store an example experience
-    use arcadia::agentdb::AgentExperience;
-    
     let experience = AgentExperience {
         id: "exp_001".to_string(),
         agent_id: "hero_agent".to_string(),
@@ -368,13 +349,12 @@ async fn demonstrate_agentdb(mut db: AgentDbManager) -> Result<()> {
         timestamp: chrono::Utc::now().timestamp(),
     };
     
-    if let Err(e) = db.store_experience("hero_agent", experience).await {
-        println!("│   Store experience: ✗ Failed - {}", e);
-    } else {
-        println!("│   Store experience: ✓ Success");
+    match db.store_experience("hero_agent", experience).await {
+        Ok(()) => println!("│   Store experience: ✓ Success"),
+        Err(e) => println!("│   Store experience: ✗ Failed - {}", e),
     }
     
-    let updated_stats = db.get_stats().await;
+    let updated_stats = db.get_stats();
     println!("│   Updated Experience Count: {}", updated_stats.total_experiences);
     println!("│                                                             │");
     println!("└─────────────────────────────────────────────────────────────┘");
@@ -395,7 +375,7 @@ fn print_status(vector_index_enabled: bool, agentdb_enabled: bool) {
     println!("  • Metrics Collection (Prometheus)");
     
     if vector_index_enabled {
-        println!("  • Vector Index (OpenAI embeddings + Qdrant)");
+        println!("  • Vector Index (OpenAI embeddings)");
     }
     
     if agentdb_enabled {
@@ -435,7 +415,6 @@ mod tests {
 
     #[test]
     fn test_constants() {
-        // Verify basic configuration
         assert!(true);
     }
 }
