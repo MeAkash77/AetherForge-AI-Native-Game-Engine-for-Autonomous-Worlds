@@ -13,7 +13,6 @@ pub struct ObjectPool<T> {
     factory: Arc<dyn Fn() -> T + Send + Sync>,
 }
 
-// Remove the Send + Sync bound from the impl, keep it only on the methods that need it
 impl<T> ObjectPool<T> {
     /// Create a new object pool with a factory function
     pub fn new<F>(factory: F) -> Self
@@ -97,40 +96,38 @@ impl<'a, T> std::ops::DerefMut for PooledObject<'a, T> {
 
 /// Bump allocator for temporary allocations with fast deallocation
 pub struct BumpAllocator {
-    bump: Mutex<Bump>,
+    bump: Arc<Mutex<Bump>>,
 }
 
 impl BumpAllocator {
     /// Create a new bump allocator
     pub fn new() -> Self {
         Self {
-            bump: Mutex::new(Bump::new()),
+            bump: Arc::new(Mutex::new(Bump::new())),
         }
     }
 
     /// Create a bump allocator with a specific capacity
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            bump: Mutex::new(Bump::with_capacity(capacity)),
+            bump: Arc::new(Mutex::new(Bump::with_capacity(capacity))),
         }
     }
 
     /// Allocate a value in the bump allocator
     pub fn alloc<T>(&self, value: T) -> &T {
-        let bump = self.bump.lock();
-        bump.alloc(value)
+        // Use a block to ensure the lock is released
+        self.bump.lock().alloc(value)
     }
 
     /// Allocate a value that implements Default
     pub fn alloc_default<T: Default>(&self) -> &T {
-        let bump = self.bump.lock();
-        bump.alloc(T::default())
+        self.bump.lock().alloc(T::default())
     }
 
-    /// Allocate a slice with the given elements (use alloc_slice_copy which requires Copy)
+    /// Allocate a slice with the given elements (requires Copy)
     pub fn alloc_slice<T: Copy>(&self, items: &[T]) -> &[T] {
-        let bump = self.bump.lock();
-        bump.alloc_slice_copy(items)
+        self.bump.lock().alloc_slice_copy(items)
     }
 
     /// Reset the allocator, deallocating all memory at once
