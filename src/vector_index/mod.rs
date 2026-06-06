@@ -9,7 +9,8 @@ use qdrant_client::{
     Qdrant,
     qdrant::{
         vectors_config::Config, CreateCollection, Distance, PointStruct, SearchPoints,
-        VectorParams, VectorsConfig, WithPayloadSelector,
+        VectorParams, VectorsConfig, WithPayloadSelector, UpsertPoints, DeletePoints,
+        PointsSelector, points_selector::PointsSelectorOneOf, PointsIdsList,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -171,13 +172,14 @@ impl VectorIndex {
                 payload,
             );
             
+            let upsert_points = UpsertPoints {
+                collection_name: self.config.collection_name.clone(),
+                points: vec![point],
+                ..Default::default()
+            };
+            
             client
-                .upsert_points(
-                    &self.config.collection_name,
-                    None,
-                    vec![point],
-                    None,
-                )
+                .upsert_points(upsert_points)
                 .await
                 .map_err(|e| VectorIndexError::QdrantError(e.to_string()))?;
         }
@@ -205,7 +207,7 @@ impl VectorIndex {
             };
             
             let search_result = client
-                .search_points(&search_points)
+                .search_points(search_points)
                 .await
                 .map_err(|e| VectorIndexError::QdrantError(e.to_string()))?;
             
@@ -227,10 +229,15 @@ impl VectorIndex {
                         .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
                         .collect();
                     
-                    // Fix: Convert PointId to string properly
+                    // Fix: Convert PointId to string
                     let id_str = match point.id.unwrap() {
-                        qdrant_client::qdrant::point_id::PointIdOptions::Uuid(uuid) => uuid.to_string(),
-                        qdrant_client::qdrant::point_id::PointIdOptions::Num(num) => num.to_string(),
+                        qdrant_client::qdrant::PointId { point_id_options: Some(point_id) } => {
+                            match point_id {
+                                qdrant_client::qdrant::point_id::PointIdOptions::Uuid(uuid) => uuid.to_string(),
+                                qdrant_client::qdrant::point_id::PointIdOptions::Num(num) => num.to_string(),
+                            }
+                        },
+                        _ => String::new(),
                     };
                     
                     SearchResult {
@@ -251,25 +258,22 @@ impl VectorIndex {
     /// Delete a vector by ID
     pub async fn delete(&self, id: &str) -> Result<(), VectorIndexError> {
         if let Some(ref client) = self.qdrant_client {
-            use qdrant_client::qdrant::PointsSelector;
-            
             let points_selector = PointsSelector {
-                points_selector_one_of: Some(
-                    qdrant_client::qdrant::points_selector::PointsSelectorOneOf::Points(
-                        qdrant_client::qdrant::PointsIdsList {
-                            ids: vec![id.into()],
-                        },
-                    ),
-                ),
+                points_selector_one_of: Some(PointsSelectorOneOf::Points(
+                    PointsIdsList {
+                        ids: vec![id.into()],
+                    },
+                )),
+            };
+            
+            let delete_points = DeletePoints {
+                collection_name: self.config.collection_name.clone(),
+                points: Some(points_selector),
+                ..Default::default()
             };
             
             client
-                .delete_points(
-                    &self.config.collection_name,
-                    None,
-                    &points_selector,
-                    None,
-                )
+                .delete_points(delete_points)
                 .await
                 .map_err(|e| VectorIndexError::QdrantError(e.to_string()))?;
         }
