@@ -36,11 +36,17 @@ exclude = [
 [lib]
 name = "arcadia"
 path = "src/lib.rs"
-crate-type = ["lib", "cdylib", "rlib"]
+crate-type = ["rlib"]  # Simplified for production (removed lib and cdylib to avoid collisions)
 
+# PRODUCTION BINARY - Runs continuously
 [[bin]]
-name = "arcadia-demo"
-path = "src/main_new.rs"
+name = "arcadia"
+path = "src/main.rs"
+
+# DEMO BINARY - Runs once and exits (commented out for production)
+# [[bin]]
+# name = "arcadia-demo"
+# path = "src/main_new.rs"
 
 [dependencies]
 # Async runtime
@@ -67,7 +73,7 @@ oauth2 = "4.4"
 # Database and storage
 sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "sqlite", "postgres"] }
 
-# Vector database client - FORCE exact version 1.11.0 (no features needed)
+# Vector database client - FORCE exact version 1.11.0
 qdrant-client = "=1.11.0"
 
 # Logging and tracing
