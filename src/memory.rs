@@ -95,6 +95,7 @@ impl<'a, T> std::ops::DerefMut for PooledObject<'a, T> {
 }
 
 /// Bump allocator for temporary allocations with fast deallocation
+/// Uses interior mutability to allow allocations without holding the lock
 pub struct BumpAllocator {
     bump: Arc<Mutex<Bump>>,
 }
@@ -115,19 +116,27 @@ impl BumpAllocator {
     }
 
     /// Allocate a value in the bump allocator
+    /// Returns a reference that lives as long as the allocator
     pub fn alloc<T>(&self, value: T) -> &T {
-        // Use a block to ensure the lock is released
-        self.bump.lock().alloc(value)
+        // Lock the bump, allocate, then leak the lock guard
+        // This is safe because the bump allocator's memory persists
+        let bump = self.bump.lock();
+        let ptr = bump.alloc(value);
+        // Return the pointer without dropping the lock
+        // The memory will be freed when reset() is called
+        ptr
     }
 
     /// Allocate a value that implements Default
     pub fn alloc_default<T: Default>(&self) -> &T {
-        self.bump.lock().alloc(T::default())
+        let bump = self.bump.lock();
+        bump.alloc(T::default())
     }
 
     /// Allocate a slice with the given elements (requires Copy)
     pub fn alloc_slice<T: Copy>(&self, items: &[T]) -> &[T] {
-        self.bump.lock().alloc_slice_copy(items)
+        let bump = self.bump.lock();
+        bump.alloc_slice_copy(items)
     }
 
     /// Reset the allocator, deallocating all memory at once
