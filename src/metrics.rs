@@ -182,18 +182,17 @@ impl MetricsTimer {
         self.start.elapsed()
     }
 
-    pub fn record(mut self) {
+    pub fn record(self) {
         let duration = self.elapsed();
         
         if self.labels.is_empty() {
             histogram!(self.name).record(duration.as_secs_f64());
         } else {
-            let labels: Vec<(&str, &str)> = self
-                .labels
-                .iter()
-                .map(|(k, v)| (k.as_str(), v.as_str()))
-                .collect();
-            histogram!(self.name, &labels[..]).record(duration.as_secs_f64());
+            let mut labels_str = Vec::new();
+            for (k, v) in self.labels {
+                labels_str.push((k.as_str(), v.as_str()));
+            }
+            histogram!(self.name, &labels_str[..]).record(duration.as_secs_f64());
         }
     }
 }
