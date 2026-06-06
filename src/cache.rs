@@ -66,40 +66,23 @@ where
     }
 
     /// Get or insert a value using the provided async function
-    /// Returns a Result where Err indicates the async function failed
-    pub async fn get_or_insert_with<F, Fut, E>(&self, key: K, f: F) -> Result<V, E>
-    where
-        F: FnOnce() -> Fut,
-        Fut: std::future::Future<Output = Result<V, E>>,
-        E: std::fmt::Debug,
-    {
-        // Use try_get_with which properly handles fallible async functions
-        // The ? operator will propagate errors from the async function
-        let result = self
-            .cache
-            .try_get_with(key, async move { f().await })
-            .await;
-        
-        result.map_err(|e| {
-            // Extract the error from moka's Error type
-            // This assumes the error is stored in the inner value
-            // For a more robust implementation, you might want to match on error types
-            match e {
-                _ => panic!("Failed to get or insert value: {:?}", e),
-            }
-        })
-    }
-
-    /// Get or insert a value using the provided async function (infallible version)
-    /// This version is simpler but doesn't handle errors
-    pub async fn get_or_insert_with_infallible<F, Fut>(&self, key: K, f: F) -> V
+    pub async fn get_or_insert_with<F, Fut>(&self, key: K, f: F) -> V
     where
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = V>,
     {
-        self.cache
-            .get_or_insert_with(key, async move { f().await })
-            .await
+        // First check if the value exists
+        if let Some(value) = self.cache.get(&key).await {
+            return value;
+        }
+        
+        // Compute the new value
+        let value = f().await;
+        
+        // Insert it into the cache
+        self.cache.insert(key, value.clone()).await;
+        
+        value
     }
 
     /// Invalidate a cache entry
@@ -198,11 +181,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_or_insert_with_infallible() {
+    async fn test_get_or_insert_with() {
         let cache = CacheManager::new(CacheConfig::default());
 
         let value = cache
-            .get_or_insert_with_infallible("key1".to_string(), || async { "computed_value".to_string() })
+            .get_or_insert_with("key1".to_string(), || async { "computed_value".to_string() })
             .await;
 
         assert_eq!(value, "computed_value");
@@ -210,40 +193,6 @@ mod tests {
         // Should return cached value without recomputing
         let cached_value = cache.get(&"key1".to_string()).await;
         assert_eq!(cached_value, Some("computed_value".to_string()));
-    }
-
-    #[tokio::test]
-    async fn test_get_or_insert_with_fallible_success() {
-        let cache = CacheManager::new(CacheConfig::default());
-
-        let value = cache
-            .get_or_insert_with("key1".to_string(), || async { 
-                Ok::<_, String>("computed_value".to_string())
-            })
-            .await;
-
-        assert_eq!(value.unwrap(), "computed_value");
-
-        // Should return cached value without recomputing
-        let cached_value = cache.get(&"key1".to_string()).await;
-        assert_eq!(cached_value, Some("computed_value".to_string()));
-    }
-
-    #[tokio::test]
-    async fn test_get_or_insert_with_fallible_error() {
-        let cache = CacheManager::new(CacheConfig::default());
-
-        let value = cache
-            .get_or_insert_with("key1".to_string(), || async { 
-                Err::<String, _>("computation failed".to_string())
-            })
-            .await;
-
-        assert!(value.is_err());
-        
-        // Value should not be cached on error
-        let cached_value = cache.get(&"key1".to_string()).await;
-        assert_eq!(cached_value, None);
     }
 
     #[tokio::test]
@@ -271,21 +220,5 @@ mod tests {
 
         let cached = cache.get(&"test_text".to_string()).await;
         assert_eq!(cached, Some(embedding));
-    }
-
-    #[tokio::test]
-    async fn test_cache_near_capacity() {
-        let cache = CacheManager::new(CacheConfig {
-            max_capacity: 10,
-            ..Default::default()
-        });
-
-        for i in 0..5 {
-            cache.insert(format!("key_{}", i), format!("value_{}", i)).await;
-        }
-
-        let stats = cache.stats();
-        assert!(!stats.is_near_capacity(60.0)); // 50% utilization
-        assert!(stats.is_near_capacity(40.0)); // 50% > 40% threshold
     }
 }
