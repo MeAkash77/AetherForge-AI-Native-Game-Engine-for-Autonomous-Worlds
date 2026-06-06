@@ -182,35 +182,18 @@ impl MetricsTimer {
         self.start.elapsed()
     }
 
-    pub fn record(self) {
+    pub fn record(mut self) {
         let duration = self.elapsed();
-        let labels: Vec<(&str, &str)> = self
-            .labels
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
-            .collect();
         
-        if labels.is_empty() {
-            histogram!(self.name.clone()).record(duration.as_secs_f64());
+        if self.labels.is_empty() {
+            histogram!(self.name).record(duration.as_secs_f64());
         } else {
-            histogram!(self.name.clone(), &labels[..]).record(duration.as_secs_f64());
-        }
-    }
-}
-
-impl Drop for MetricsTimer {
-    fn drop(&mut self) {
-        let duration = self.elapsed();
-        let labels: Vec<(&str, &str)> = self
-            .labels
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
-            .collect();
-        
-        if labels.is_empty() {
-            histogram!(self.name.clone()).record(duration.as_secs_f64());
-        } else {
-            histogram!(self.name.clone(), &labels[..]).record(duration.as_secs_f64());
+            let labels: Vec<(&str, &str)> = self
+                .labels
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
+            histogram!(self.name, &labels[..]).record(duration.as_secs_f64());
         }
     }
 }
