@@ -184,13 +184,13 @@ impl MetricsTimer {
 
     pub fn record(self) {
         let duration = self.elapsed();
+        let name = self.name; // Take ownership of name
         
         if self.labels.is_empty() {
-            histogram!(self.name).record(duration.as_secs_f64());
+            histogram!(name).record(duration.as_secs_f64());
         } else {
-            // Convert owned strings to static strings for the macro
             for (k, v) in self.labels {
-                histogram!(self.name, "label" => format!("{}={}", k, v)).record(duration.as_secs_f64());
+                histogram!(name.clone(), "label" => format!("{}={}", k, v)).record(duration.as_secs_f64());
             }
         }
     }
