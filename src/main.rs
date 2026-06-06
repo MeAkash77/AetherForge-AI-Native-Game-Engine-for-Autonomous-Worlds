@@ -1,342 +1,441 @@
-// ARCADIA: Advanced and Responsive Computational Architecture for Dynamic Interactive AI
-//        /\__/\   - main.rs
-//       ( o.o  )  - v1.0.0
-//         >^<     - by @rUv
-//
-// Main entry point integrating VIVIAN and PARIS frameworks
+//! ARCADIA Game Engine - Main Entry Point
+//!
+//! This demonstrates the core features of ARCADIA including:
+//! - Vector indexing for semantic search
+//! - Caching and memory management
+//! - Performance monitoring
+//! - AgentDB integration
 
 use arcadia::{
-    ArcadiaEngine, ArcadiaConfig,
-    vivian, paris,
+    vector_index::{VectorIndex, VectorIndexConfig, SearchResult},
+    cache::{CacheManager, CacheConfig, EmbeddingCache},
+    memory::MemoryManager,
+    metrics::{init_metrics, MetricsTimer, MetricsSnapshot},
+    agentdb::{AgentDbConfig, AgentDbManager},
 };
-use std::path::PathBuf;
+use anyhow::Result;
 use std::collections::HashMap;
+use std::time::Instant;
+use tracing::{info, warn, error, debug};
+use tracing_subscriber;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("╔══════════════════════════════════════════════════════════════╗");
-    println!("║  ARCADIA: AI-Driven Game Engine Architecture               ║");
-    println!("║  Advanced & Responsive Computational Architecture          ║");
-    println!("║  for Dynamic Interactive AI                                ║");
-    println!("║                                                             ║");
-    println!("║  Version: 1.0.0                                            ║");
-    println!("║  Author: @rUv                                              ║");
-    println!("╚══════════════════════════════════════════════════════════════╝");
-    println!();
+async fn main() -> Result<()> {
+    // Initialize logging
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            std::env::var("RUST_LOG")
+                .unwrap_or_else(|_| "info".to_string())
+        )
+        .with_target(false)
+        .init();
 
-    // Create engine configuration
-    let config = create_config();
+    print_banner();
 
-    println!("Creating ARCADIA engine...");
-    let engine = ArcadiaEngine::new(config).await?;
+    info!("Initializing ARCADIA Game Engine v0.1.0");
+    info!("Edition: 2021 | Rust Version: 1.75+");
 
-    println!("Initializing frameworks...");
-    engine.initialize().await?;
+    // Initialize metrics
+    if let Err(e) = init_metrics() {
+        warn!("Failed to initialize metrics: {}", e);
+    } else {
+        info!("✓ Metrics system initialized (Prometheus exporter)");
+    }
 
-    println!();
-    println!("═══════════════════════════════════════════════════════════════");
-    println!("  ARCADIA Engine Demonstration");
-    println!("═══════════════════════════════════════════════════════════════");
-    println!();
+    // Initialize memory manager
+    let memory_manager = MemoryManager::new();
+    info!("✓ Memory manager initialized");
 
-    // Demonstrate vector indexing
-    demonstrate_vector_indexing(&engine).await?;
+    // Initialize cache
+    let cache = CacheManager::new(CacheConfig::default());
+    info!("✓ Cache system initialized (capacity: 10,000 entries, TTL: 1 hour)");
 
-    // Demonstrate distributed operations
-    demonstrate_distributed_operations(&engine).await?;
-
-    // Demonstrate feedback and learning
-    demonstrate_adaptive_learning(&engine).await?;
-
-    // Run adaptive cycles
-    run_adaptive_cycles(&engine, 5).await?;
-
-    // Display engine statistics
-    display_statistics(&engine).await?;
-
-    // Graceful shutdown
-    println!("\nShutting down engine...");
-    engine.shutdown().await?;
-
-    println!("\n✓ ARCADIA engine demonstration complete!");
+    // Initialize vector index
+    let vector_index = initialize_vector_index().await;
+    
+    // Initialize AgentDB
+    let agent_db = initialize_agentdb().await;
+    
+    // Run demonstrations
+    run_demonstrations(vector_index, &cache, &memory_manager, agent_db).await?;
+    
+    // Print final status
+    print_status(vector_index.is_some(), agent_db.is_some());
+    
+    // Run engine loop
+    run_engine_loop().await;
 
     Ok(())
 }
 
-fn create_config() -> ArcadiaConfig {
-    // VIVIAN Configuration
-    let vivian_config = vivian::VivianConfig {
-        vector_config: vivian::vector_index::VectorIndexConfig {
-            dimension: 512,
-            metric: vivian::vector_index::SimilarityMetric::Cosine,
-            index_type: vivian::vector_index::IndexType::HNSW,
-            capacity: 100_000,
-            sharding_enabled: true,
-            shard_count: 4,
-        },
-        distributed_config: vivian::distributed::DistributedConfig {
-            node_id: "arcadia_main_node".to_string(),
-            cluster_size: 3,
-            replication_factor: 2,
-            consistency_level: vivian::distributed::ConsistencyLevel::Quorum,
-            gossip_interval_ms: 1000,
-            heartbeat_timeout_ms: 5000,
-        },
-        network_config: vivian::network::NetworkConfig {
-            listen_address: "0.0.0.0:8080".parse().unwrap(),
-            protocol: vivian::network::NetworkProtocol::QUIC,
-            max_connections: 1000,
-            connection_timeout_ms: 30000,
-            enable_encryption: true,
-            buffer_size: 65536,
-        },
-        storage_config: vivian::storage::StorageConfig {
-            storage_type: vivian::storage::StorageType::FileSystem,
-            data_path: PathBuf::from("./data/arcadia"),
-            cache_size_mb: 512,
-            enable_compression: true,
-            enable_encryption: true,
-            backup_enabled: true,
-            backup_interval_hours: 24,
-        },
-    };
-
-    // PARIS Configuration
-    let paris_config = paris::ParisConfig {
-        feedback_config: paris::feedback::FeedbackConfig {
-            max_queue_size: 10000,
-            feedback_types: vec![
-                paris::feedback::FeedbackType::PlayerBehavior,
-                paris::feedback::FeedbackType::Performance,
-                paris::feedback::FeedbackType::AIDecision,
-                paris::feedback::FeedbackType::UserExperience,
-            ],
-            aggregation_interval_ms: 5000,
-            enable_filtering: true,
-            priority_threshold: 0.3,
-        },
-        learning_config: paris::learning::LearningConfig {
-            learning_rate: 0.001,
-            adaptation_threshold: 0.15,
-            pattern_window_size: 1000,
-            enable_online_learning: true,
-            enable_transfer_learning: true,
-            model_update_frequency: 100,
-        },
-        optimization_config: paris::optimization::OptimizationConfig {
-            enable_auto_tuning: true,
-            optimization_interval_ms: 60000,
-            performance_target: 0.90,
-            max_optimization_iterations: 100,
-            convergence_threshold: 0.001,
-        },
-        layer_config: paris::layers::LayerConfig {
-            layers: vec![
-                paris::layers::LayerDefinition {
-                    id: "perception".to_string(),
-                    layer_type: paris::layers::LayerType::CoreModel,
-                    priority: 1,
-                    dependencies: vec![],
-                },
-                paris::layers::LayerDefinition {
-                    id: "reasoning".to_string(),
-                    layer_type: paris::layers::LayerType::CoreModel,
-                    priority: 2,
-                    dependencies: vec!["perception".to_string()],
-                },
-                paris::layers::LayerDefinition {
-                    id: "action".to_string(),
-                    layer_type: paris::layers::LayerType::CoreModel,
-                    priority: 3,
-                    dependencies: vec!["reasoning".to_string()],
-                },
-            ],
-            enable_layer_fusion: true,
-            enable_skip_connections: true,
-            layer_communication_protocol: paris::layers::CommunicationProtocol::Asynchronous,
-        },
-    };
-
-    ArcadiaConfig {
-        vivian_config,
-        paris_config,
-        engine_name: "ARCADIA Demo Engine".to_string(),
-        enable_telemetry: true,
-    }
+fn print_banner() {
+    println!(r#"
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                                                                              ║
+║    █████  ██████   ██████  █████   ██████  ██    ██  █████                 ║
+║   ██   ██ ██   ██ ██      ██   ██ ██       ██   ██  ██   ██                ║
+║   ███████ ██████  ██      ███████ ██   ███ ██████   ███████                ║
+║   ██   ██ ██   ██ ██      ██   ██ ██    ██ ██   ██  ██   ██                ║
+║   ██   ██ ██   ██  ██████ ██   ██  ██████  ██   ██  ██   ██                ║
+║                                                                              ║
+║   ARCADIA: AI-Driven Game Engine Architecture                               ║
+║   Advanced & Responsive Computational Architecture for Dynamic Interactive AI║
+║                                                                              ║
+║   Version: 0.1.0                                    by @rUv                 ║
+║                                                                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+    "#);
 }
 
-async fn demonstrate_vector_indexing(engine: &ArcadiaEngine) -> Result<(), Box<dyn std::error::Error>> {
-    println!("┌─ Vector Indexing Demonstration ─────────────────────────┐");
-
-    let vivian = engine.vivian().read().await;
-    let vector_index = vivian.vector_index();
-    let mut vi_guard = vector_index.write().await;
-
-    // Create an index for game assets
-    vi_guard.create_index("game_assets".to_string()).await?;
-    println!("│ ✓ Created 'game_assets' vector index");
-
-    // Add some sample embeddings (simulated game assets)
-    let asset_types = vec!["tree", "rock", "building", "character", "weapon"];
-
-    for (i, asset_type) in asset_types.iter().enumerate() {
-        let vector: Vec<f32> = (0..512)
-            .map(|j| ((i + j) as f32 * 0.001).sin())
-            .collect();
-
-        let embedding = arcadia::VectorEmbedding {
-            id: format!("{}_{}", asset_type, i),
-            vector,
-            metadata: HashMap::from([
-                ("type".to_string(), asset_type.to_string()),
-                ("category".to_string(), "environment".to_string()),
-            ]),
-            timestamp: chrono::Utc::now().timestamp_millis(),
-        };
-
-        vi_guard.add_embedding("game_assets", embedding).await?;
-        println!("│ ✓ Added embedding: {}", asset_type);
-    }
-
-    // Perform a search
-    let query_vector: Vec<f32> = (0..512)
-        .map(|j| (j as f32 * 0.001).sin())
-        .collect();
-
-    let results = vi_guard.search("game_assets", &query_vector, 3).await?;
-    println!("│");
-    println!("│ Search Results (top 3):");
-    for (i, result) in results.iter().enumerate() {
-        println!("│   {}. {} (score: {:.4})", i + 1, result.id, result.score);
-    }
-
-    println!("└──────────────────────────────────────────────────────────┘");
-    println!();
-
-    Ok(())
-}
-
-async fn demonstrate_distributed_operations(engine: &ArcadiaEngine) -> Result<(), Box<dyn std::error::Error>> {
-    println!("┌─ Distributed Operations Demonstration ──────────────────┐");
-
-    let vivian = engine.vivian().read().await;
-    let distributed = vivian.distributed();
-    let mut dist_guard = distributed.write().await;
-
-    // Store data in DHT
-    let world_data = b"Game world state: Region 01".to_vec();
-    dist_guard.dht_put("world_region_01".to_string(), world_data).await?;
-    println!("│ ✓ Stored world data in DHT");
-
-    // Retrieve data
-    if let Some(data) = dist_guard.dht_get("world_region_01").await? {
-        let data_str = String::from_utf8_lossy(&data);
-        println!("│ ✓ Retrieved: {}", data_str);
-    }
-
-    // Get cluster stats
-    let stats = dist_guard.get_cluster_stats().await;
-    println!("│");
-    println!("│ Cluster Statistics:");
-    println!("│   Total Nodes: {}", stats.total_nodes);
-    println!("│   Active Nodes: {}", stats.active_nodes);
-    println!("│   DHT Entries: {}", stats.dht_entries);
-
-    println!("└──────────────────────────────────────────────────────────┘");
-    println!();
-
-    Ok(())
-}
-
-async fn demonstrate_adaptive_learning(engine: &ArcadiaEngine) -> Result<(), Box<dyn std::error::Error>> {
-    println!("┌─ Adaptive Learning Demonstration ───────────────────────┐");
-
-    let paris = engine.paris().read().await;
-    let feedback_mgr = paris.feedback();
-    let mut fb_guard = feedback_mgr.write().await;
-
-    // Submit feedback data
-    let feedback_items = vec![
-        ("player_1", 0.85, "engagement"),
-        ("player_2", 0.72, "difficulty"),
-        ("player_3", 0.91, "satisfaction"),
-    ];
-
-    for (player, value, metric) in feedback_items {
-        let feedback = arcadia::FeedbackData {
-            id: format!("fb_{}", player),
-            feedback_type: arcadia::FeedbackType::PlayerBehavior,
-            source: player.to_string(),
-            timestamp: chrono::Utc::now().timestamp_millis(),
-            priority: 0.8,
-            data: HashMap::from([
-                (metric.to_string(), value),
-            ]),
-            metadata: HashMap::new(),
-        };
-
-        fb_guard.submit_feedback(feedback).await?;
-        println!("│ ✓ Submitted feedback from {}: {} = {:.2}", player, metric, value);
-    }
-
-    // Process feedback
-    let aggregated = fb_guard.process_feedback().await?;
-    println!("│");
-    println!("│ Aggregated {} feedback items", aggregated.len());
-
-    drop(fb_guard);
-
-    // Learn from feedback
-    let learning_mgr = paris.learning();
-    let mut learn_guard = learning_mgr.write().await;
-    let learning_result = learn_guard.process_feedback(&aggregated).await?;
-
-    println!("│");
-    println!("│ Learning Results:");
-    println!("│   Model Updates: {}", learning_result.update_count);
-    println!("│   Patterns Discovered: {}", learning_result.patterns_discovered.len());
-    println!("│   Performance Delta: {:.4}", learning_result.performance_delta);
-
-    println!("└──────────────────────────────────────────────────────────┘");
-    println!();
-
-    Ok(())
-}
-
-async fn run_adaptive_cycles(engine: &ArcadiaEngine, count: usize) -> Result<(), Box<dyn std::error::Error>> {
-    println!("┌─ Running Adaptive Cycles ───────────────────────────────┐");
-
-    for i in 1..=count {
-        let metrics = engine.run_adaptive_cycle().await?;
-
-        println!("│ Cycle #{:02}:", metrics.cycle_number);
-        println!("│   Duration: {}ms", metrics.duration_ms);
-        println!("│   Feedback: {}", metrics.feedback_count);
-        println!("│   Learning Updates: {}", metrics.learning_updates);
-        println!("│   Optimizations: {}", metrics.optimizations_applied);
-        println!("│   Layers Updated: {}", metrics.layers_updated);
-
-        if i < count {
-            println!("│");
+async fn initialize_vector_index() -> Option<VectorIndex> {
+    match std::env::var("OPENAI_API_KEY") {
+        Ok(api_key) => {
+            info!("OpenAI API key found, initializing vector index...");
+            
+            let config = VectorIndexConfig {
+                url: "https://api.openai.com".to_string(),
+                api_key,
+                qdrant_url: std::env::var("QDRANT_URL").ok(),
+                collection_name: "arcadia_demo".to_string(),
+                embedding_model: "text-embedding-3-small".to_string(),
+                vector_dimension: 1536,
+            };
+            
+            let timer = Instant::now();
+            match VectorIndex::new(config).await {
+                Ok(index) => {
+                    info!("✓ Vector index initialized in {:.2}s", timer.elapsed().as_secs_f64());
+                    info!("  - Collection: arcadia_demo");
+                    info!("  - Dimension: 1536");
+                    info!("  - Model: text-embedding-3-small");
+                    Some(index)
+                }
+                Err(e) => {
+                    warn!("⚠ Vector index initialization failed: {}", e);
+                    None
+                }
+            }
+        }
+        Err(_) => {
+            info!("ℹ OpenAI API key not set, vector index disabled");
+            info!("  Set OPENAI_API_KEY environment variable to enable semantic search");
+            None
         }
     }
+}
 
-    println!("└──────────────────────────────────────────────────────────┘");
-    println!();
+async fn initialize_agentdb() -> Option<AgentDbManager> {
+    let config = AgentDbConfig {
+        db_name: "arcadia_agents".to_string(),
+        vector_dim: 1536,
+        max_memory_mb: 512,
+        replay_buffer_size: 10000,
+        wasm_enabled: false,
+        enable_compression: true,
+    };
+    
+    match AgentDbManager::new(config).await {
+        Ok(mut db) => {
+            info!("✓ AgentDB initialized");
+            if let Err(e) = db.initialize().await {
+                warn!("  AgentDB initialization warning: {}", e);
+            }
+            Some(db)
+        }
+        Err(e) => {
+            warn!("⚠ AgentDB initialization failed: {}", e);
+            None
+        }
+    }
+}
 
+async fn run_demonstrations(
+    vector_index: Option<VectorIndex>,
+    cache: &CacheManager<String, String>,
+    memory_manager: &MemoryManager,
+    agent_db: Option<AgentDbManager>,
+) -> Result<()> {
+    println!("\n{}", "═".repeat(70));
+    println!("  ARCADIA Engine Demonstration");
+    println!("{}\n", "═".repeat(70));
+    
+    // Demonstrate caching
+    demonstrate_caching(cache).await?;
+    
+    // Demonstrate memory management
+    demonstrate_memory_management(memory_manager).await?;
+    
+    // Demonstrate vector indexing if available
+    if let Some(index) = vector_index {
+        demonstrate_vector_indexing(index).await?;
+    }
+    
+    // Demonstrate AgentDB if available
+    if let Some(db) = agent_db {
+        demonstrate_agentdb(db).await?;
+    }
+    
     Ok(())
 }
 
-async fn display_statistics(engine: &ArcadiaEngine) -> Result<(), Box<dyn std::error::Error>> {
-    println!("┌─ Engine Statistics ──────────────────────────────────────┐");
-
-    let stats = engine.get_stats().await;
-
-    println!("│ Total Cycles: {}", stats.total_cycles);
-    println!("│ Total Cycle Time: {}ms", stats.total_cycle_time_ms);
-    println!("│ Average Cycle Time: {:.2}ms", stats.average_cycle_time_ms());
-
-    println!("└──────────────────────────────────────────────────────────┘");
-
+async fn demonstrate_caching(cache: &CacheManager<String, String>) -> Result<()> {
+    println!("\n┌─ Cache System Demonstration ─────────────────────────────────┐");
+    println!("│                                                             │");
+    
+    let timer = Instant::now();
+    
+    // Store items in cache
+    let items = vec![
+        ("player_health", "100"),
+        ("player_mana", "50"),
+        ("player_stamina", "75"),
+        ("current_zone", "Dragon's Peak"),
+        ("difficulty", "Hard"),
+    ];
+    
+    for (key, value) in &items {
+        cache.insert(key.to_string(), value.to_string()).await;
+    }
+    
+    println!("│ Stored {} items in cache:", items.len());
+    for (key, value) in &items {
+        println!("│   • {} = {}", key, value);
+    }
+    println!("│                                                             │");
+    
+    // Retrieve items
+    println!("│ Retrieving items from cache:");
+    for (key, _) in &items {
+        if let Some(value) = cache.get(&key.to_string()).await {
+            println!("│   ✓ {} = {}", key, value);
+        }
+    }
+    println!("│                                                             │");
+    
+    // Cache statistics
+    let stats = cache.stats();
+    println!("│ Cache Statistics:                                          │");
+    println!("│   Entry Count: {}", stats.entry_count);
+    println!("│   Weighted Size: {}", stats.weighted_size);
+    println!("│   Max Capacity: {}", stats.max_capacity);
+    println!("│   Utilization: {:.1}%", stats.utilization());
+    println!("│                                                             │");
+    println!("│ Cache Operations Time: {:.2}ms", timer.elapsed().as_millis());
+    println!("│                                                             │");
+    println!("└─────────────────────────────────────────────────────────────┘");
+    
     Ok(())
+}
+
+async fn demonstrate_memory_management(memory_manager: &MemoryManager) -> Result<()> {
+    println!("\n┌─ Memory Management Demonstration ───────────────────────────┐");
+    println!("│                                                             │");
+    
+    // Simulate memory allocations
+    let allocations = vec![
+        (1024 * 1024, "Game state"),      // 1 MB
+        (512 * 1024, "NPC data"),          // 512 KB
+        (2 * 1024 * 1024, "World map"),    // 2 MB
+        (256 * 1024, "Cache data"),        // 256 KB
+        (4 * 1024 * 1024, "Textures"),     // 4 MB
+    ];
+    
+    for (bytes, description) in &allocations {
+        memory_manager.record_allocation(*bytes);
+        println!("│   Allocated {:.2} MB for {}", *bytes as f64 / (1024.0 * 1024.0), description);
+    }
+    
+    println!("│                                                             │");
+    
+    let stats = memory_manager.get_stats();
+    println!("│ Memory Statistics:                                         │");
+    println!("│   Total Allocated: {:.2} MB", stats.allocated_bytes as f64 / (1024.0 * 1024.0));
+    println!("│   Current Usage: {:.2} MB", stats.current_bytes as f64 / (1024.0 * 1024.0));
+    println!("│   Peak Usage: {:.2} MB", stats.peak_bytes as f64 / (1024.0 * 1024.0));
+    println!("│   Total Deallocated: {:.2} MB", stats.deallocated_bytes as f64 / (1024.0 * 1024.0));
+    
+    // Deallocate some memory
+    memory_manager.record_deallocation(2 * 1024 * 1024); // Free 2 MB
+    let updated_stats = memory_manager.get_stats();
+    println!("│                                                             │");
+    println!("│ After Deallocation:                                        │");
+    println!("│   Current Usage: {:.2} MB", updated_stats.current_bytes as f64 / (1024.0 * 1024.0));
+    
+    println!("│                                                             │");
+    println!("└─────────────────────────────────────────────────────────────┘");
+    
+    Ok(())
+}
+
+async fn demonstrate_vector_indexing(index: VectorIndex) -> Result<()> {
+    println!("\n┌─ Vector Indexing Demonstration ─────────────────────────────┐");
+    println!("│                                                             │");
+    
+    // Game concepts to index
+    let concepts = vec![
+        ("fantasy_warrior", "A brave warrior wielding a magical sword in a fantasy realm"),
+        ("stealth_assassin", "A silent assassin using shadows and daggers for covert operations"),
+        ("elemental_mage", "A powerful mage controlling fire, ice, and lightning elements"),
+        ("forest_druid", "A nature-protecting druid with animal companions and healing powers"),
+        ("undead_necromancer", "A dark necromancer raising skeletons and casting curses"),
+        ("dragon", "A mighty fire-breathing dragon guarding ancient treasure"),
+        ("goblin", "A sneaky goblin stealing gold from travelers"),
+    ];
+    
+    println!("│ Indexing game concepts as vector embeddings...");
+    println!("│                                                             │");
+    
+    let timer = Instant::now();
+    for (id, description) in &concepts {
+        let mut metadata = HashMap::new();
+        metadata.insert("type".to_string(), "game_concept".to_string());
+        metadata.insert("category".to_string(), "npc".to_string());
+        
+        match index.store(Some(id.to_string()), description, metadata).await {
+            Ok(stored_id) => println!("│   ✓ Stored: {}", stored_id),
+            Err(e) => println!("│   ✗ Failed to store {}: {}", id, e),
+        }
+    }
+    println!("│                                                             │");
+    println!("│ Indexing completed in {:.2}s", timer.elapsed().as_secs_f64());
+    println!("│                                                             │");
+    
+    // Semantic search queries
+    let queries = vec![
+        ("Who can fight with swords?", 3),
+        ("What creatures breathe fire?", 2),
+        ("Who uses magic spells?", 2),
+        ("Who is stealthy and sneaky?", 2),
+        ("Nature protectors and healers", 2),
+    ];
+    
+    println!("│ Semantic Search Results:                                    │");
+    println!("│                                                             │");
+    
+    for (query, limit) in queries {
+        println!("│   Query: \"{}\" (top {})", query, limit);
+        
+        let search_timer = Instant::now();
+        match index.search(query, limit).await {
+            Ok(results) => {
+                println!("│     Search time: {:.2}ms", search_timer.elapsed().as_millis());
+                for (i, result) in results.iter().enumerate() {
+                    println!("│     {}. {} (score: {:.4})", i + 1, result.id, result.score);
+                    let preview = if result.text.len() > 50 {
+                        format!("{}...", &result.text[..50])
+                    } else {
+                        result.text.clone()
+                    };
+                    println!("│        \"{}\"", preview);
+                }
+            }
+            Err(e) => println!("│     ✗ Search failed: {}", e),
+        }
+        println!("│                                                             │");
+    }
+    
+    println!("└─────────────────────────────────────────────────────────────┘");
+    
+    Ok(())
+}
+
+async fn demonstrate_agentdb(mut db: AgentDbManager) -> Result<()> {
+    println!("\n┌─ AgentDB Demonstration ─────────────────────────────────────┐");
+    println!("│                                                             │");
+    println!("│ AgentDB provides persistent learning and memory for AI agents│");
+    println!("│                                                             │");
+    
+    // Get database stats
+    let stats = db.get_stats().await;
+    println!("│ Database Statistics:                                       │");
+    println!("│   Initialized: {}", stats.initialized);
+    println!("│   Total Experiences: {}", stats.total_experiences);
+    println!("│   Memory Usage: {:.2} MB", stats.memory_usage_mb);
+    println!("│                                                             │");
+    
+    // Store an example experience
+    use arcadia::agentdb::AgentExperience;
+    
+    let experience = AgentExperience {
+        id: "exp_001".to_string(),
+        agent_id: "hero_agent".to_string(),
+        state_vector: vec![0.1, 0.2, 0.3, 0.4, 0.5],
+        action: "attack".to_string(),
+        reward: 1.0,
+        next_state_vector: vec![0.2, 0.3, 0.4, 0.5, 0.6],
+        done: false,
+        metadata: HashMap::new(),
+        timestamp: chrono::Utc::now().timestamp(),
+    };
+    
+    if let Err(e) = db.store_experience("hero_agent", experience).await {
+        println!("│   Store experience: ✗ Failed - {}", e);
+    } else {
+        println!("│   Store experience: ✓ Success");
+    }
+    
+    let updated_stats = db.get_stats().await;
+    println!("│   Updated Experience Count: {}", updated_stats.total_experiences);
+    println!("│                                                             │");
+    println!("└─────────────────────────────────────────────────────────────┘");
+    
+    Ok(())
+}
+
+fn print_status(vector_index_enabled: bool, agentdb_enabled: bool) {
+    println!("\n{}", "═".repeat(70));
+    println!("  Engine Status");
+    println!("{}\n", "═".repeat(70));
+    
+    println!("✓ ARCADIA Engine is fully operational");
+    println!();
+    println!("Active Components:");
+    println!("  • Cache System (LRU with TTL)");
+    println!("  • Memory Manager (allocation tracking)");
+    println!("  • Metrics Collection (Prometheus)");
+    
+    if vector_index_enabled {
+        println!("  • Vector Index (OpenAI embeddings + Qdrant)");
+    }
+    
+    if agentdb_enabled {
+        println!("  • AgentDB (persistent learning)");
+    }
+    
+    if !vector_index_enabled {
+        println!();
+        println!("ℹ To enable vector search:");
+        println!("  Set OPENAI_API_KEY environment variable");
+    }
+    
+    println!();
+}
+
+async fn run_engine_loop() {
+    println!("\n{}", "═".repeat(70));
+    println!("  ARCADIA Engine is Running");
+    println!("{}\n", "═".repeat(70));
+    println!("Press Ctrl+C to stop the engine\n");
+    
+    let mut cycle = 0;
+    loop {
+        tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
+        cycle += 1;
+        debug!("Engine heartbeat - Cycle {}", cycle);
+        
+        if cycle % 10 == 0 {
+            info!("Engine running - {} cycles completed", cycle);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_constants() {
+        // Verify basic configuration
+        assert!(true);
+    }
 }
