@@ -188,11 +188,10 @@ impl MetricsTimer {
         if self.labels.is_empty() {
             histogram!(self.name).record(duration.as_secs_f64());
         } else {
-            let mut labels_str = Vec::new();
+            // Convert owned strings to static strings for the macro
             for (k, v) in self.labels {
-                labels_str.push((k.as_str(), v.as_str()));
+                histogram!(self.name, "label" => format!("{}={}", k, v)).record(duration.as_secs_f64());
             }
-            histogram!(self.name, &labels_str[..]).record(duration.as_secs_f64());
         }
     }
 }
