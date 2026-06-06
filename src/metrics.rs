@@ -3,7 +3,7 @@
 //! Provides real-time performance tracking for vector operations, AI decisions,
 //! cache hit rates, and system resources.
 
-use metrics::{counter, gauge, histogram};
+use metrics::{counter, gauge, histogram, register_histogram};
 use std::time::{Duration, Instant};
 
 /// Initialize metrics system with Prometheus exporter
@@ -211,11 +211,19 @@ impl MetricsTimer {
     /// Record the timer as a histogram
     pub fn record(self) {
         let duration = self.elapsed();
-        let mut hist = histogram!(self.name.clone());
-        for (key, value) in &self.labels {
-            hist = hist.with_label(key.clone(), value.clone());
+        let labels: &[(String, String)] = &self.labels;
+        
+        // Use with_labels method which accepts a slice of key-value pairs
+        if labels.is_empty() {
+            histogram!(self.name.clone()).record(duration.as_secs_f64());
+        } else {
+            // Convert labels to the format expected by metrics crate
+            let label_refs: Vec<(&str, &str)> = labels
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
+            histogram!(self.name.clone(), &label_refs[..]).record(duration.as_secs_f64());
         }
-        hist.record(duration.as_secs_f64());
     }
 }
 
@@ -223,11 +231,17 @@ impl Drop for MetricsTimer {
     fn drop(&mut self) {
         // Auto-record on drop if not explicitly recorded
         let duration = self.elapsed();
-        let mut hist = histogram!(self.name.clone());
-        for (key, value) in &self.labels {
-            hist = hist.with_label(key.clone(), value.clone());
+        let labels: Vec<(&str, &str)> = self
+            .labels
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        
+        if labels.is_empty() {
+            histogram!(self.name.clone()).record(duration.as_secs_f64());
+        } else {
+            histogram!(self.name.clone(), &labels[..]).record(duration.as_secs_f64());
         }
-        hist.record(duration.as_secs_f64());
     }
 }
 
