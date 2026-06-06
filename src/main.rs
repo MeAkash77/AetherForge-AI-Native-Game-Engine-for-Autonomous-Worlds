@@ -6,6 +6,13 @@
 //! - Performance monitoring
 //! - AgentDB integration
 
+// ===== CRYPTO PROVIDER INITIALIZATION - MUST BE FIRST =====
+#[cfg(not(target_arch = "wasm32"))]
+fn init_crypto() {
+    // Try to install the ring crypto provider
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 use arcadia::{
     vector_index::{VectorIndex, VectorIndexConfig},
     cache::{CacheManager, CacheConfig},
@@ -21,6 +28,10 @@ use tracing_subscriber;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Initialize crypto provider FIRST - before anything else
+    #[cfg(not(target_arch = "wasm32"))]
+    init_crypto();
+    
     // Initialize logging
     tracing_subscriber::fmt()
         .with_env_filter(
