@@ -53,8 +53,8 @@ path = "src/main.rs"
 tokio = { version = "1.40", features = ["full"] }
 async-trait = "0.1"
 
-# HTTP client and server - Add native-tls for better compatibility
-reqwest = { version = "0.12", features = ["json", "stream", "native-tls"] }
+# HTTP client and server - Use rustls with ring (no native-tls)
+reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"] }
 axum = "0.7"
 tower = "0.5"
 tower-http = { version = "0.5", features = ["cors", "trace"] }
@@ -135,7 +135,7 @@ bumpalo = "3.16"
 metrics = "0.24"
 metrics-exporter-prometheus = "0.17"
 
-# FIX: Add rustls with ring crypto provider to resolve TLS panic
+# TLS - Use rustls with ring crypto provider
 rustls = { version = "0.23", features = ["ring"] }
 
 [dev-dependencies]
