@@ -15,7 +15,7 @@ pub struct ObjectPool<T> {
 
 impl<T> ObjectPool<T>
 where
-    T: Send + Sync + 'static,  // Added Sync bound
+    T: Send + Sync + 'static,
 {
     /// Create a new object pool with a factory function
     pub fn new<F>(factory: F) -> Self
@@ -42,7 +42,6 @@ where
     fn release(&self, obj: T) {
         let mut objects = self.objects.lock();
         if objects.len() < 1000 {
-            // Limit pool size to prevent unbounded growth
             objects.push(obj);
         }
     }
@@ -119,28 +118,26 @@ impl BumpAllocator {
     }
 
     /// Allocate a value in the bump allocator
-    /// Returns a reference that lives as long as the BumpAllocator
     pub fn alloc<T>(&self, value: T) -> &T {
-        // Lock the mutex to access the bump allocator
-        let mut bump = self.bump.lock();
+        let bump = self.bump.lock();
         bump.alloc(value)
     }
 
     /// Allocate a value that implements Default
     pub fn alloc_default<T: Default>(&self) -> &T {
-        let mut bump = self.bump.lock();
+        let bump = self.bump.lock();
         bump.alloc(T::default())
     }
 
     /// Allocate a slice with the given elements
     pub fn alloc_slice<T: Clone>(&self, items: &[T]) -> &[T] {
-        let mut bump = self.bump.lock();
+        let bump = self.bump.lock();
         bump.alloc_slice_copy(items)
     }
 
     /// Reset the allocator, deallocating all memory at once
     pub fn reset(&self) {
-        let mut bump = self.bump.lock();
+        let bump = self.bump.lock();
         bump.reset();
     }
 
@@ -259,12 +256,11 @@ mod tests {
             let mut obj1 = pool.acquire();
             obj1.push(42);
             assert_eq!(obj1.len(), 1);
-        } // obj1 returned to pool
+        }
 
         assert_eq!(pool.len(), 1);
 
         let obj2 = pool.acquire();
-        // Object was reused, but should be cleared in production use
         drop(obj2);
     }
 
@@ -282,9 +278,6 @@ mod tests {
         assert!(allocated > 0);
 
         allocator.reset();
-        // Note: allocated_bytes may not reset to 0 immediately in all bumpalo versions
-        // Reset deallocates memory but allocated_bytes might still report previous usage
-        // This is expected behavior
     }
 
     #[test]
@@ -301,7 +294,7 @@ mod tests {
 
         stats.record_deallocation(512);
         assert_eq!(stats.current_bytes, 1024);
-        assert_eq!(stats.peak_bytes, 1536); // Peak remains
+        assert_eq!(stats.peak_bytes, 1536);
     }
 
     #[test]
