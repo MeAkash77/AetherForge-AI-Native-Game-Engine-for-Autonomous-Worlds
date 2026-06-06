@@ -22,6 +22,7 @@ use arcadia::{
 };
 use anyhow::Result;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::time::Instant;
 use tracing::{info, warn, debug};
 use tracing_subscriber;
@@ -72,6 +73,9 @@ async fn main() -> Result<()> {
     
     // Print final status
     print_status(vector_index.is_some(), agent_db.is_some());
+    
+    // Start the health check server for Render
+    tokio::spawn(start_health_server());
     
     // Run engine loop
     run_engine_loop().await;
@@ -401,6 +405,30 @@ fn print_status(vector_index_enabled: bool, agentdb_enabled: bool) {
     }
     
     println!();
+}
+
+/// Start a simple HTTP health server for Render
+async fn start_health_server() {
+    use axum::{Router, routing::get};
+    
+    let app = Router::new()
+        .route("/health", get(|| async { "OK" }))
+        .route("/", get(|| async { "ARCADIA Engine Running" }));
+    
+    let port = std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(10000);
+    
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    info!("Starting health server on port {}", port);
+    
+    if let Err(e) = axum::Server::bind(&addr)
+        .serve(app.into_make_service())
+        .await
+    {
+        error!("Health server error: {}", e);
+    }
 }
 
 async fn run_engine_loop() {
