@@ -13,10 +13,8 @@ pub struct ObjectPool<T> {
     factory: Arc<dyn Fn() -> T + Send + Sync>,
 }
 
-impl<T> ObjectPool<T>
-where
-    T: Send + Sync + 'static,
-{
+// Remove the Send + Sync bound from the impl, keep it only on the methods that need it
+impl<T> ObjectPool<T> {
     /// Create a new object pool with a factory function
     pub fn new<F>(factory: F) -> Self
     where
@@ -117,30 +115,22 @@ impl BumpAllocator {
         }
     }
 
-    /// Allocate a value in the bump allocator (returns a reference that lives as long as the allocator)
+    /// Allocate a value in the bump allocator
     pub fn alloc<T>(&self, value: T) -> &T {
-        // SAFETY: The bump allocator's memory persists after the lock is released.
-        // The returned reference's lifetime is tied to &self, not the lock guard.
-        unsafe {
-            let bump_ptr = &*self.bump.data_ptr();
-            (*bump_ptr).alloc(value)
-        }
+        let bump = self.bump.lock();
+        bump.alloc(value)
     }
 
     /// Allocate a value that implements Default
     pub fn alloc_default<T: Default>(&self) -> &T {
-        unsafe {
-            let bump_ptr = &*self.bump.data_ptr();
-            (*bump_ptr).alloc(T::default())
-        }
+        let bump = self.bump.lock();
+        bump.alloc(T::default())
     }
 
-    /// Allocate a slice with the given elements (requires Clone, not Copy)
-    pub fn alloc_slice<T: Clone>(&self, items: &[T]) -> &[T] {
-        unsafe {
-            let bump_ptr = &*self.bump.data_ptr();
-            (*bump_ptr).alloc_slice_copy(items)
-        }
+    /// Allocate a slice with the given elements (use alloc_slice_copy which requires Copy)
+    pub fn alloc_slice<T: Copy>(&self, items: &[T]) -> &[T] {
+        let bump = self.bump.lock();
+        bump.alloc_slice_copy(items)
     }
 
     /// Reset the allocator, deallocating all memory at once
