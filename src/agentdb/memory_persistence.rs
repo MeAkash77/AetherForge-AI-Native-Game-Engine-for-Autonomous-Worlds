@@ -52,7 +52,10 @@ impl MemoryPersistence {
 
     /// Initialize the persistence layer
     pub async fn initialize(&mut self) -> Result<(), AgentDbError> {
-        match &self.backend {
+        // Clone the backend to avoid borrowing issues
+        let backend_clone = self.backend.clone();
+        
+        match backend_clone {
             StorageBackend::File { path } => {
                 // Create data directory if it doesn't exist
                 if let Some(parent) = path.parent() {
@@ -61,13 +64,13 @@ impl MemoryPersistence {
 
                 // Load existing data if available
                 if path.exists() {
-                    self.load_from_file(path).await?;
+                    self.load_from_file(&path).await?;
                 }
             }
             StorageBackend::IndexedDb { db_name } => {
                 #[cfg(target_arch = "wasm32")]
                 {
-                    self.initialize_indexed_db(db_name).await?;
+                    self.initialize_indexed_db(&db_name).await?;
                 }
                 #[cfg(not(target_arch = "wasm32"))]
                 {
