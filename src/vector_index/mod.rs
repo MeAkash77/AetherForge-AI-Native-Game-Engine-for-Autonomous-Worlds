@@ -6,7 +6,7 @@ use async_openai::{
     Client as OpenAIClient,
 };
 use qdrant_client::{
-    client::QdrantClient,
+    Qdrant,
     qdrant::{
         vectors_config::Config, CreateCollection, Distance, PointStruct, SearchPoints,
         VectorParams, VectorsConfig, WithPayloadSelector,
@@ -58,7 +58,7 @@ impl Default for VectorIndexConfig {
 pub struct VectorIndex {
     config: VectorIndexConfig,
     openai_client: OpenAIClient<async_openai::config::OpenAIConfig>,
-    qdrant_client: Option<QdrantClient>,
+    qdrant_client: Option<Qdrant>,
 }
 
 impl VectorIndex {
@@ -71,7 +71,7 @@ impl VectorIndex {
 
         let qdrant_client = if let Some(ref qdrant_url) = config.qdrant_url {
             Some(
-                QdrantClient::from_url(qdrant_url)
+                Qdrant::from_url(qdrant_url)
                     .build()
                     .map_err(|e| VectorIndexError::QdrantError(e.to_string()))?
             )
@@ -120,7 +120,7 @@ impl VectorIndex {
                 };
                 
                 client
-                    .create_collection(&create_collection)
+                    .create_collection(create_collection)
                     .await
                     .map_err(|e| VectorIndexError::QdrantError(e.to_string()))?;
             }
@@ -227,8 +227,14 @@ impl VectorIndex {
                         .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
                         .collect();
                     
+                    // Fix: Convert PointId to string properly
+                    let id_str = match point.id.unwrap() {
+                        qdrant_client::qdrant::point_id::PointIdOptions::Uuid(uuid) => uuid.to_string(),
+                        qdrant_client::qdrant::point_id::PointIdOptions::Num(num) => num.to_string(),
+                    };
+                    
                     SearchResult {
-                        id: point.id.unwrap().to_string(),
+                        id: id_str,
                         score: point.score,
                         text,
                         metadata,
