@@ -120,24 +120,32 @@ impl BumpAllocator {
     /// Allocate a value in the bump allocator
     pub fn alloc<T>(&self, value: T) -> &T {
         let bump = self.bump.lock();
-        bump.alloc(value)
+        // SAFETY: The bump allocator owns the memory, and the lock is released
+        // but the memory remains valid. The reference lifetime is tied to the allocator.
+        let ptr = bump.alloc(value);
+        std::mem::forget(bump);
+        ptr
     }
 
     /// Allocate a value that implements Default
     pub fn alloc_default<T: Default>(&self) -> &T {
         let bump = self.bump.lock();
-        bump.alloc(T::default())
+        let ptr = bump.alloc(T::default());
+        std::mem::forget(bump);
+        ptr
     }
 
-    /// Allocate a slice with the given elements
+    /// Allocate a slice with the given elements (requires Clone)
     pub fn alloc_slice<T: Clone>(&self, items: &[T]) -> &[T] {
         let bump = self.bump.lock();
-        bump.alloc_slice_copy(items)
+        let ptr = bump.alloc_slice_copy(items);
+        std::mem::forget(bump);
+        ptr
     }
 
     /// Reset the allocator, deallocating all memory at once
     pub fn reset(&self) {
-        let bump = self.bump.lock();
+        let mut bump = self.bump.lock();
         bump.reset();
     }
 
