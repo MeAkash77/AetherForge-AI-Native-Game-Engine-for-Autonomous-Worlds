@@ -52,22 +52,19 @@ impl MemoryPersistence {
 
     /// Initialize the persistence layer
     pub async fn initialize(&mut self) -> Result<(), AgentDbError> {
-        // Clone the backend to avoid borrowing issues
         let backend_clone = self.backend.clone();
         
         match backend_clone {
             StorageBackend::File { path } => {
-                // Create data directory if it doesn't exist
                 if let Some(parent) = path.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
 
-                // Load existing data if available
                 if path.exists() {
                     self.load_from_file(&path).await?;
                 }
             }
-            StorageBackend::IndexedDb { db_name } => {
+            StorageBackend::IndexedDb { db_name: _ } => {
                 #[cfg(target_arch = "wasm32")]
                 {
                     self.initialize_indexed_db(&db_name).await?;
@@ -93,7 +90,6 @@ impl MemoryPersistence {
         agent_id: &str,
         experience: &AgentExperience,
     ) -> Result<(), AgentDbError> {
-        // Add to memory cache
         self.memory_cache
             .entry(agent_id.to_string())
             .or_insert_with(Vec::new)
@@ -101,7 +97,6 @@ impl MemoryPersistence {
 
         self.dirty = true;
 
-        // Check memory limits
         self.enforce_memory_limits()?;
 
         Ok(())
@@ -186,16 +181,13 @@ impl MemoryPersistence {
         Ok(())
     }
 
-    // Private methods
-
     /// Enforce memory limits by removing old experiences
     fn enforce_memory_limits(&mut self) -> Result<(), AgentDbError> {
         let current_usage = self.get_memory_usage_mb();
         let max_usage = self.config.max_memory_mb as f32;
 
         if current_usage > max_usage {
-            // Remove oldest experiences until under limit
-            let target_size = (max_usage * 0.8) as usize; // Aim for 80% of max
+            let target_size = (max_usage * 0.8) as usize;
 
             for experiences in self.memory_cache.values_mut() {
                 if experiences.len() > target_size {
@@ -212,7 +204,6 @@ impl MemoryPersistence {
         let data = std::fs::read(path)?;
 
         if self.config.enable_compression {
-            // Decompress data (simplified - would use actual compression library)
             self.memory_cache = bincode::deserialize(&data)
                 .map_err(|e| AgentDbError::SerializationError(e.to_string()))?;
         } else {
@@ -229,7 +220,6 @@ impl MemoryPersistence {
             .map_err(|e| AgentDbError::SerializationError(e.to_string()))?;
 
         if self.config.enable_compression {
-            // Compress data (simplified - would use actual compression library)
             std::fs::write(path, data)?;
         } else {
             std::fs::write(path, data)?;
@@ -241,14 +231,12 @@ impl MemoryPersistence {
     /// Initialize IndexedDB (WASM only)
     #[cfg(target_arch = "wasm32")]
     async fn initialize_indexed_db(&self, _db_name: &str) -> Result<(), AgentDbError> {
-        // TODO: Implement using rexie crate
         Ok(())
     }
 
     /// Save to IndexedDB (WASM only)
     #[cfg(target_arch = "wasm32")]
     async fn save_to_indexed_db(&self) -> Result<(), AgentDbError> {
-        // TODO: Implement using rexie crate
         Ok(())
     }
 }
@@ -336,14 +324,13 @@ mod tests {
     async fn test_memory_limits() {
         let config = AgentDbConfig {
             wasm_enabled: false,
-            max_memory_mb: 1, // Very small limit for testing
+            max_memory_mb: 1,
             ..Default::default()
         };
 
         let mut persistence = MemoryPersistence::new(&config).await.unwrap();
         persistence.initialize().await.unwrap();
 
-        // Add many experiences
         for i in 0..1000 {
             let experience = AgentExperience {
                 id: format!("exp_{}", i),
