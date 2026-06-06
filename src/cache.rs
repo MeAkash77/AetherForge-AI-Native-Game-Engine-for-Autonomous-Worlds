@@ -5,7 +5,6 @@
 
 use moka::future::Cache;
 use std::hash::Hash;
-use std::sync::Arc;
 use std::time::Duration;
 
 /// Cache configuration with performance tuning parameters
@@ -71,17 +70,12 @@ where
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = V>,
     {
-        // First check if the value exists
         if let Some(value) = self.cache.get(&key).await {
             return value;
         }
         
-        // Compute the new value
         let value = f().await;
-        
-        // Insert it into the cache
         self.cache.insert(key, value.clone()).await;
-        
         value
     }
 
@@ -190,7 +184,6 @@ mod tests {
 
         assert_eq!(value, "computed_value");
 
-        // Should return cached value without recomputing
         let cached_value = cache.get(&"key1".to_string()).await;
         assert_eq!(cached_value, Some("computed_value".to_string()));
     }
