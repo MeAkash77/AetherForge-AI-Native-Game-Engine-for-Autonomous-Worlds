@@ -6,35 +6,28 @@ use async_openai::{
     Client as OpenAIClient,
 };
 use qdrant_client::{
-    Qdrant,
+    client::QdrantClient,
     qdrant::{
-        vectors_config::Config, CreateCollection, Distance, PointStruct, SearchPoints,
-        VectorParams, VectorsConfig, Value, with_payload_selector::SelectorOptions,
-        WithPayloadSelector,
+        vectors_config::Config, CreateCollection, DeletePoints, Distance, PointStruct,
+        SearchPoints, VectorParams, VectorsConfig, WithPayloadSelector,
     },
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
-
-#[cfg(feature = "vector-index")]
-use crate::cache::EmbeddingCache;
-#[cfg(feature = "vector-index")]
-use crate::metrics::{cache_metrics, vector_metrics};
 
 #[derive(Error, Debug)]
 pub enum VectorIndexError {
     #[error("OpenAI API error: {0}")]
     OpenAIError(String),
-    
+
     #[error("Qdrant error: {0}")]
     QdrantError(String),
-    
+
     #[error("Serialization error: {0}")]
     SerializationError(#[from] serde_json::Error),
-    
+
     #[error("Vector dimension mismatch")]
     DimensionMismatch,
 }
@@ -65,40 +58,31 @@ impl Default for VectorIndexConfig {
 pub struct VectorIndex {
     config: VectorIndexConfig,
     openai_client: OpenAIClient<async_openai::config::OpenAIConfig>,
-    qdrant_client: Option<Qdrant>,
-    #[cfg(feature = "vector-index")]
-    embedding_cache: Option<Arc<EmbeddingCache>>,
+    qdrant_client: Option<QdrantClient>,
 }
 
 impl VectorIndex {
-    /// Create a new VectorIndex instance with caching enabled
+    /// Create a new VectorIndex instance
     pub async fn new(config: VectorIndexConfig) -> Result<Self, VectorIndexError> {
         let openai_config = async_openai::config::OpenAIConfig::new()
             .with_api_key(&config.api_key);
 
         let openai_client = OpenAIClient::with_config(openai_config);
 
-        // Updated Qdrant client initialization for newer API
         let qdrant_client = if let Some(ref qdrant_url) = config.qdrant_url {
             Some(
-                Qdrant::from_url(qdrant_url)
-                    .timeout(std::time::Duration::from_secs(30))
+                QdrantClient::from_url(qdrant_url)
                     .build()
-                    .map_err(|e| VectorIndexError::QdrantError(e.to_string()))?
+                    .map_err(|e| VectorIndexError::QdrantError(e.to_string()))?,
             )
         } else {
             None
         };
 
-        #[cfg(feature = "vector-index")]
-        let embedding_cache = Some(Arc::new(crate::cache::create_embedding_cache()));
-
         let index = Self {
             config,
             openai_client,
             qdrant_client,
-            #[cfg(feature = "vector-index")]
-            embedding_cache,
         };
 
         // Initialize collection if Qdrant is available
@@ -108,7 +92,7 @@ impl VectorIndex {
 
         Ok(index)
     }
-    
+
     /// Initialize the Qdrant collection
     async fn init_collection(&self) -> Result<(), VectorIndexError> {
         if let Some(ref client) = self.qdrant_client {
@@ -116,95 +100,53 @@ impl VectorIndex {
                 .list_collections()
                 .await
                 .map_err(|e| VectorIndexError::QdrantError(e.to_string()))?;
-            
+
             let collection_exists = collections
                 .collections
                 .iter()
                 .any(|c| c.name == self.config.collection_name);
-            
+
             if !collection_exists {
-                use qdrant_client::qdrant::CreateCollectionBuilder;
-                
-                let create_collection = CreateCollectionBuilder::new(
-                    &self.config.collection_name,
-                    self.config.vector_dimension as u64,
-                    Distance::Cosine,
-                )
-                .build();
-                
+                let create_collection = CreateCollection {
+                    collection_name: self.config.collection_name.clone(),
+                    vectors_config: Some(VectorsConfig {
+                        config: Some(Config::Params(VectorParams {
+                            size: self.config.vector_dimension as u64,
+                            distance: Distance::Cosine.into(),
+                            ..Default::default()
+                        })),
+                    }),
+                    ..Default::default()
+                };
+
                 client
-                    .create_collection(&create_collection)
+                    .create_collection(create_collection)
                     .await
                     .map_err(|e| VectorIndexError::QdrantError(e.to_string()))?;
             }
         }
-        
+
         Ok(())
     }
-    
-    /// Generate embeddings for text using OpenAI with caching and metrics
+
+    /// Generate embeddings for text using OpenAI
     pub async fn embed_text(&self, text: &str) -> Result<Vec<f32>, VectorIndexError> {
-        #[cfg(feature = "vector-index")]
-        {
-            let start = std::time::Instant::now();
+        let request = CreateEmbeddingRequestArgs::default()
+            .model(&self.config.embedding_model)
+            .input(EmbeddingInput::String(text.to_string()))
+            .build()
+            .map_err(|e| VectorIndexError::OpenAIError(e.to_string()))?;
 
-            // Check cache first
-            if let Some(ref cache) = self.embedding_cache {
-                if let Some(cached_embedding) = cache.get(&text.to_string()).await {
-                    cache_metrics::record_hit("embedding");
-                    vector_metrics::record_embedding(start.elapsed());
-                    return Ok(cached_embedding);
-                }
-                cache_metrics::record_miss("embedding");
-            }
+        let response = self
+            .openai_client
+            .embeddings()
+            .create(request)
+            .await
+            .map_err(|e| VectorIndexError::OpenAIError(e.to_string()))?;
 
-            // Generate embedding via API
-            let request = CreateEmbeddingRequestArgs::default()
-                .model(&self.config.embedding_model)
-                .input(EmbeddingInput::String(text.to_string()))
-                .build()
-                .map_err(|e| VectorIndexError::OpenAIError(e.to_string()))?;
-
-            let response = self
-                .openai_client
-                .embeddings()
-                .create(request)
-                .await
-                .map_err(|e| {
-                    vector_metrics::record_error("embed_text");
-                    VectorIndexError::OpenAIError(e.to_string())
-                })?;
-
-            let embedding = response.data[0].embedding.clone();
-
-            // Cache the result
-            if let Some(ref cache) = self.embedding_cache {
-                cache.insert(text.to_string(), embedding.clone()).await;
-            }
-
-            vector_metrics::record_embedding(start.elapsed());
-            Ok(embedding)
-        }
-
-        #[cfg(not(feature = "vector-index"))]
-        {
-            let request = CreateEmbeddingRequestArgs::default()
-                .model(&self.config.embedding_model)
-                .input(EmbeddingInput::String(text.to_string()))
-                .build()
-                .map_err(|e| VectorIndexError::OpenAIError(e.to_string()))?;
-
-            let response = self
-                .openai_client
-                .embeddings()
-                .create(request)
-                .await
-                .map_err(|e| VectorIndexError::OpenAIError(e.to_string()))?;
-
-            Ok(response.data[0].embedding.clone())
-        }
+        Ok(response.data[0].embedding.clone())
     }
-    
+
     /// Store a vector with metadata
     pub async fn store(
         &self,
@@ -214,30 +156,35 @@ impl VectorIndex {
     ) -> Result<String, VectorIndexError> {
         let vector = self.embed_text(text).await?;
         let point_id = id.unwrap_or_else(|| Uuid::new_v4().to_string());
-        
+
         if let Some(ref client) = self.qdrant_client {
-            let mut payload: HashMap<String, Value> = metadata
+            let mut payload: HashMap<String, qdrant_client::qdrant::Value> = metadata
                 .into_iter()
-                .map(|(k, v)| (k, Value::from(v)))
+                .map(|(k, v)| (k, qdrant_client::qdrant::Value::from(v)))
                 .collect();
-            
-            payload.insert("text".to_string(), Value::from(text.to_string()));
-            
-            let point = PointStruct::new(
-                point_id.clone(),
-                vector,
-                payload,
+
+            payload.insert(
+                "text".to_string(),
+                qdrant_client::qdrant::Value::from(text.to_string()),
             );
-            
+
+            let point = PointStruct::new(point_id.clone(), vector, payload);
+
+            let upsert_points = qdrant_client::qdrant::UpsertPoints {
+                collection_name: self.config.collection_name.clone(),
+                points: vec![point],
+                ..Default::default()
+            };
+
             client
-                .upsert_points_blocking(&self.config.collection_name, None, vec![point], None)
+                .upsert_points(upsert_points)
                 .await
                 .map_err(|e| VectorIndexError::QdrantError(e.to_string()))?;
         }
-        
+
         Ok(point_id)
     }
-    
+
     /// Search for similar vectors
     pub async fn search(
         &self,
@@ -245,21 +192,23 @@ impl VectorIndex {
         limit: usize,
     ) -> Result<Vec<SearchResult>, VectorIndexError> {
         let query_vector = self.embed_text(query).await?;
-        
+
         if let Some(ref client) = self.qdrant_client {
+            let search_points = SearchPoints {
+                collection_name: self.config.collection_name.clone(),
+                vector: query_vector,
+                limit: limit as u64,
+                with_payload: Some(WithPayloadSelector {
+                    selector_options: None,
+                }),
+                ..Default::default()
+            };
+
             let search_result = client
-                .search_points(&SearchPoints {
-                    collection_name: self.config.collection_name.clone(),
-                    vector: query_vector,
-                    limit: limit as u64,
-                    with_payload: Some(WithPayloadSelector {
-                        selector_options: Some(SelectorOptions::Enable(true)),
-                    }),
-                    ..Default::default()
-                })
+                .search_points(search_points)
                 .await
                 .map_err(|e| VectorIndexError::QdrantError(e.to_string()))?;
-            
+
             let results = search_result
                 .result
                 .into_iter()
@@ -268,18 +217,16 @@ impl VectorIndex {
                         .payload
                         .get("text")
                         .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    
+                        .map(|s| s.to_string())
+                        .unwrap_or_default();
+
                     let metadata: HashMap<String, String> = point
                         .payload
                         .into_iter()
                         .filter(|(k, _)| k != "text")
-                        .filter_map(|(k, v)| {
-                            v.as_str().map(|s| (k, s.to_string()))
-                        })
+                        .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
                         .collect();
-                    
+
                     SearchResult {
                         id: point.id.unwrap().to_string(),
                         score: point.score,
@@ -288,27 +235,36 @@ impl VectorIndex {
                     }
                 })
                 .collect();
-            
+
             Ok(results)
         } else {
             Ok(vec![])
         }
     }
-    
+
     /// Delete a vector by ID
     pub async fn delete(&self, id: &str) -> Result<(), VectorIndexError> {
         if let Some(ref client) = self.qdrant_client {
+            let delete_points = DeletePoints {
+                collection_name: self.config.collection_name.clone(),
+                points: Some(qdrant_client::qdrant::PointsSelector {
+                    points_selector: Some(
+                        qdrant_client::qdrant::points_selector::PointsSelector::Points(
+                            qdrant_client::qdrant::PointsIdsList {
+                                ids: vec![id.into()],
+                            },
+                        ),
+                    ),
+                }),
+                ..Default::default()
+            };
+
             client
-                .delete_points(
-                    &self.config.collection_name,
-                    None,
-                    &[id.into()],
-                    None,
-                )
+                .delete_points(delete_points)
                 .await
                 .map_err(|e| VectorIndexError::QdrantError(e.to_string()))?;
         }
-        
+
         Ok(())
     }
 }
@@ -324,7 +280,7 @@ pub struct SearchResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_embed_text() {
         // This test requires an actual API key
@@ -332,16 +288,16 @@ mod tests {
         if std::env::var("OPENAI_API_KEY").is_err() {
             return;
         }
-        
+
         let config = VectorIndexConfig {
             api_key: std::env::var("OPENAI_API_KEY").unwrap(),
             qdrant_url: None,
             ..Default::default()
         };
-        
+
         let index = VectorIndex::new(config).await.unwrap();
         let embedding = index.embed_text("Hello, world!").await.unwrap();
-        
+
         assert_eq!(embedding.len(), 1536);
     }
 }
