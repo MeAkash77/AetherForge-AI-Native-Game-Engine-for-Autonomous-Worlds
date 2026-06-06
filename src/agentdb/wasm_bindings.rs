@@ -5,7 +5,6 @@
 
 use wasm_bindgen::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// WASM-compatible AgentDB configuration
 #[wasm_bindgen]
@@ -288,7 +287,7 @@ mod tests {
     #[test]
     fn test_config_creation() {
         let config = WasmAgentDbConfig::new();
-        assert_eq!(config.db_name, "arcadia_agents");
-        assert_eq!(config.vector_dim, 1536);
+        assert_eq!(config.db_name(), "arcadia_agents");
+        assert_eq!(config.vector_dim(), 1536);
     }
 }
