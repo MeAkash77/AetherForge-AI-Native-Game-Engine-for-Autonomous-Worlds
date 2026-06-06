@@ -56,8 +56,8 @@ async fn main() -> Result<()> {
     // Initialize AgentDB
     let mut agent_db = initialize_agentdb().await;
     
-    // Run demonstrations
-    run_demonstrations(vector_index, &cache, &memory_manager, &mut agent_db).await?;
+    // Run demonstrations - PASS BY REFERENCE (fix)
+    run_demonstrations(&vector_index, &cache, &memory_manager, &mut agent_db).await?;
     
     // Print final status
     print_status(vector_index.is_some(), agent_db.is_some());
@@ -142,8 +142,9 @@ async fn initialize_agentdb() -> Option<AgentDbManager> {
     }
 }
 
+// FIXED: Now takes reference instead of owned value
 async fn run_demonstrations(
-    vector_index: Option<VectorIndex>,
+    vector_index: &Option<VectorIndex>,  // Changed to reference
     cache: &CacheManager<String, String>,
     memory_manager: &MemoryManager,
     agent_db: &mut Option<AgentDbManager>,
@@ -159,7 +160,7 @@ async fn run_demonstrations(
     demonstrate_memory_management(memory_manager).await?;
     
     // Demonstrate vector indexing if available
-    if let Some(index) = vector_index {
+    if let Some(index) = vector_index {  // Works with &Option
         demonstrate_vector_indexing(index).await?;
     }
     
@@ -260,7 +261,7 @@ async fn demonstrate_memory_management(memory_manager: &MemoryManager) -> Result
     Ok(())
 }
 
-async fn demonstrate_vector_indexing(index: VectorIndex) -> Result<()> {
+async fn demonstrate_vector_indexing(index: &VectorIndex) -> Result<()> {
     println!("\n┌─ Vector Indexing Demonstration ─────────────────────────────┐");
     println!("│                                                             │");
     
