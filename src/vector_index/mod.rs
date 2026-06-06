@@ -6,7 +6,7 @@ use async_openai::{
     Client as OpenAIClient,
 };
 use qdrant_client::{
-    client::QdrantClient,
+    Qdrant,
     qdrant::{
         vectors_config::Config, CreateCollection, Distance, PointStruct, SearchPoints,
         VectorParams, VectorsConfig, Value, with_payload_selector::SelectorOptions,
@@ -15,8 +15,14 @@ use qdrant_client::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
+
+#[cfg(feature = "vector-index")]
+use crate::cache::EmbeddingCache;
+#[cfg(feature = "vector-index")]
+use crate::metrics::{cache_metrics, vector_metrics};
 
 #[derive(Error, Debug)]
 pub enum VectorIndexError {
@@ -59,12 +65,10 @@ impl Default for VectorIndexConfig {
 pub struct VectorIndex {
     config: VectorIndexConfig,
     openai_client: OpenAIClient<async_openai::config::OpenAIConfig>,
-    qdrant_client: Option<QdrantClient>,
+    qdrant_client: Option<Qdrant>,
     #[cfg(feature = "vector-index")]
-    embedding_cache: Option<Arc<crate::cache::EmbeddingCache>>,
+    embedding_cache: Option<Arc<EmbeddingCache>>,
 }
-
-use std::sync::Arc;
 
 impl VectorIndex {
     /// Create a new VectorIndex instance with caching enabled
@@ -74,9 +78,11 @@ impl VectorIndex {
 
         let openai_client = OpenAIClient::with_config(openai_config);
 
+        // Updated Qdrant client initialization for newer API
         let qdrant_client = if let Some(ref qdrant_url) = config.qdrant_url {
             Some(
-                QdrantClient::from_url(qdrant_url)
+                Qdrant::from_url(qdrant_url)
+                    .timeout(std::time::Duration::from_secs(30))
                     .build()
                     .map_err(|e| VectorIndexError::QdrantError(e.to_string()))?
             )
@@ -117,18 +123,17 @@ impl VectorIndex {
                 .any(|c| c.name == self.config.collection_name);
             
             if !collection_exists {
+                use qdrant_client::qdrant::CreateCollectionBuilder;
+                
+                let create_collection = CreateCollectionBuilder::new(
+                    &self.config.collection_name,
+                    self.config.vector_dimension as u64,
+                    Distance::Cosine,
+                )
+                .build();
+                
                 client
-                    .create_collection(&CreateCollection {
-                        collection_name: self.config.collection_name.clone(),
-                        vectors_config: Some(VectorsConfig {
-                            config: Some(Config::Params(VectorParams {
-                                size: self.config.vector_dimension as u64,
-                                distance: Distance::Cosine.into(),
-                                ..Default::default()
-                            })),
-                        }),
-                        ..Default::default()
-                    })
+                    .create_collection(&create_collection)
                     .await
                     .map_err(|e| VectorIndexError::QdrantError(e.to_string()))?;
             }
@@ -146,11 +151,11 @@ impl VectorIndex {
             // Check cache first
             if let Some(ref cache) = self.embedding_cache {
                 if let Some(cached_embedding) = cache.get(&text.to_string()).await {
-                    crate::metrics::cache_metrics::record_hit("embedding");
-                    crate::metrics::vector_metrics::record_embedding(start.elapsed());
+                    cache_metrics::record_hit("embedding");
+                    vector_metrics::record_embedding(start.elapsed());
                     return Ok(cached_embedding);
                 }
-                crate::metrics::cache_metrics::record_miss("embedding");
+                cache_metrics::record_miss("embedding");
             }
 
             // Generate embedding via API
@@ -166,7 +171,7 @@ impl VectorIndex {
                 .create(request)
                 .await
                 .map_err(|e| {
-                    crate::metrics::vector_metrics::record_error("embed_text");
+                    vector_metrics::record_error("embed_text");
                     VectorIndexError::OpenAIError(e.to_string())
                 })?;
 
@@ -177,7 +182,7 @@ impl VectorIndex {
                 cache.insert(text.to_string(), embedding.clone()).await;
             }
 
-            crate::metrics::vector_metrics::record_embedding(start.elapsed());
+            vector_metrics::record_embedding(start.elapsed());
             Ok(embedding)
         }
 
