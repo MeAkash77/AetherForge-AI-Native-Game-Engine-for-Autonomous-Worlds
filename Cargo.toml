@@ -1,53 +1,3 @@
-[package]
-name = "arcadia"
-version = "0.1.0"
-edition = "2021"
-rust-version = "1.75"
-authors = ["Reuven Cohen <ruv@ruvnet.com>"]
-description = "AI-driven game engine with VIVIAN and PARIS frameworks for dynamic, adaptive gaming experiences with AgentDB learning"
-documentation = "https://docs.rs/arcadia"
-homepage = "https://ruv.io/arcadia"
-repository = "https://github.com/ruvnet/ARCADIA"
-readme = "README.md"
-license = "MIT OR Apache-2.0"
-keywords = ["game-engine", "ai", "vector-index", "adaptive", "procedural"]
-categories = ["game-engines", "simulation"]
-exclude = [
-    ".github/",
-    ".claude/",
-    ".claude-flow/",
-    ".hive-mind/",
-    ".swarm/",
-    "memory/",
-    "coordination/",
-    "docs/",
-    ".gitignore",
-    ".replit",
-    ".mcp.json",
-    "replit.nix",
-    "claude-flow",
-    "run_tests.sh",
-    "config.example.toml",
-    "*.md",
-    "!README.md",
-    "!CHANGELOG.md",
-]
-
-[lib]
-name = "arcadia"
-path = "src/lib.rs"
-crate-type = ["rlib"]  # Simplified for production (removed lib and cdylib to avoid collisions)
-
-# PRODUCTION BINARY - Runs continuously
-[[bin]]
-name = "arcadia"
-path = "src/main.rs"
-
-# DEMO BINARY - Runs once and exits (commented out for production)
-# [[bin]]
-# name = "arcadia-demo"
-# path = "src/main_new.rs"
-
 [dependencies]
 # Async runtime
 tokio = { version = "1.40", features = ["full"] }
@@ -135,21 +85,5 @@ bumpalo = "3.16"
 metrics = "0.24"
 metrics-exporter-prometheus = "0.17"
 
-[dev-dependencies]
-mockito = "1.5"
-wiremock = "0.6"
-tokio-test = "0.4"
-wasm-bindgen-test = "0.3"
-
-[profile.release]
-opt-level = 3
-lto = true
-codegen-units = 1
-
-[profile.dev]
-opt-level = 0
-debug = true
-
-[features]
-default = []
-vector-index = []
+# FIX: Add rustls with ring crypto provider
+rustls = { version = "0.23", features = ["ring"] }
