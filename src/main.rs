@@ -24,7 +24,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::Instant;
-use tracing::{info, warn, debug};
+use tracing::{info, warn, debug, error};
 use tracing_subscriber;
 
 #[tokio::main]
@@ -410,6 +410,7 @@ fn print_status(vector_index_enabled: bool, agentdb_enabled: bool) {
 /// Start a simple HTTP health server for Render
 async fn start_health_server() {
     use axum::{Router, routing::get};
+    use tokio::net::TcpListener;
     
     let app = Router::new()
         .route("/health", get(|| async { "OK" }))
@@ -423,11 +424,15 @@ async fn start_health_server() {
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     info!("Starting health server on port {}", port);
     
-    if let Err(e) = axum::Server::bind(&addr)
-        .serve(app.into_make_service())
-        .await
-    {
-        error!("Health server error: {}", e);
+    match TcpListener::bind(addr).await {
+        Ok(listener) => {
+            if let Err(e) = axum::serve(listener, app).await {
+                error!("Health server error: {}", e);
+            }
+        }
+        Err(e) => {
+            error!("Failed to bind to port {}: {}", port, e);
+        }
     }
 }
 
