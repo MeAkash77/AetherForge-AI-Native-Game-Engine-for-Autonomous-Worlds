@@ -99,48 +99,40 @@ impl<'a, T> std::ops::DerefMut for PooledObject<'a, T> {
 
 /// Bump allocator for temporary allocations with fast deallocation
 pub struct BumpAllocator {
-    bump: Mutex<Bump>,
+    bump: Arc<Mutex<Bump>>,
 }
 
 impl BumpAllocator {
     /// Create a new bump allocator
     pub fn new() -> Self {
         Self {
-            bump: Mutex::new(Bump::new()),
+            bump: Arc::new(Mutex::new(Bump::new())),
         }
     }
 
     /// Create a bump allocator with a specific capacity
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            bump: Mutex::new(Bump::with_capacity(capacity)),
+            bump: Arc::new(Mutex::new(Bump::with_capacity(capacity))),
         }
     }
 
     /// Allocate a value in the bump allocator
     pub fn alloc<T>(&self, value: T) -> &T {
         let bump = self.bump.lock();
-        // SAFETY: The bump allocator owns the memory, and the lock is released
-        // but the memory remains valid. The reference lifetime is tied to the allocator.
-        let ptr = bump.alloc(value);
-        std::mem::forget(bump);
-        ptr
+        bump.alloc(value)
     }
 
     /// Allocate a value that implements Default
     pub fn alloc_default<T: Default>(&self) -> &T {
         let bump = self.bump.lock();
-        let ptr = bump.alloc(T::default());
-        std::mem::forget(bump);
-        ptr
+        bump.alloc(T::default())
     }
 
     /// Allocate a slice with the given elements (requires Clone)
     pub fn alloc_slice<T: Clone>(&self, items: &[T]) -> &[T] {
         let bump = self.bump.lock();
-        let ptr = bump.alloc_slice_copy(items);
-        std::mem::forget(bump);
-        ptr
+        bump.alloc_slice_copy(items)
     }
 
     /// Reset the allocator, deallocating all memory at once
