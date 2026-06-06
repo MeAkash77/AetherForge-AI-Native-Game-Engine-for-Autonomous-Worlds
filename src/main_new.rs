@@ -1,7 +1,6 @@
 //! ARCADIA Demo - Quick start example
 
 use arcadia::{
-    vector_index::{VectorIndex, VectorIndexConfig},
     cache::CacheManager,
     memory::MemoryManager,
 };
@@ -11,8 +10,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("ARCADIA Demo - Quick Start");
     println!("==========================\n");
     
-    // Show cache example
-    let cache = CacheManager::<String, String>::default();
+    // Show cache example - use new() instead of default()
+    let cache_config = arcadia::cache::CacheConfig::default();
+    let cache = CacheManager::<String, String>::new(cache_config);
     cache.insert("demo_key".to_string(), "demo_value".to_string()).await;
     
     if let Some(value) = cache.get(&"demo_key".to_string()).await {
