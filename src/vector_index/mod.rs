@@ -8,8 +8,8 @@ use async_openai::{
 use qdrant_client::{
     client::QdrantClient,
     qdrant::{
-        vectors_config::Config, CreateCollection, DeletePoints, Distance, PointStruct,
-        SearchPoints, VectorParams, VectorsConfig, WithPayloadSelector,
+        vectors_config::Config, CreateCollection, Distance, PointStruct, SearchPoints,
+        VectorParams, VectorsConfig, WithPayloadSelector,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -73,7 +73,7 @@ impl VectorIndex {
             Some(
                 QdrantClient::from_url(qdrant_url)
                     .build()
-                    .map_err(|e| VectorIndexError::QdrantError(e.to_string()))?,
+                    .map_err(|e| VectorIndexError::QdrantError(e.to_string()))?
             )
         } else {
             None
@@ -100,12 +100,12 @@ impl VectorIndex {
                 .list_collections()
                 .await
                 .map_err(|e| VectorIndexError::QdrantError(e.to_string()))?;
-
+            
             let collection_exists = collections
                 .collections
                 .iter()
                 .any(|c| c.name == self.config.collection_name);
-
+            
             if !collection_exists {
                 let create_collection = CreateCollection {
                     collection_name: self.config.collection_name.clone(),
@@ -118,14 +118,14 @@ impl VectorIndex {
                     }),
                     ..Default::default()
                 };
-
+                
                 client
-                    .create_collection(create_collection)
+                    .create_collection(&create_collection)
                     .await
                     .map_err(|e| VectorIndexError::QdrantError(e.to_string()))?;
             }
         }
-
+        
         Ok(())
     }
 
@@ -156,32 +156,32 @@ impl VectorIndex {
     ) -> Result<String, VectorIndexError> {
         let vector = self.embed_text(text).await?;
         let point_id = id.unwrap_or_else(|| Uuid::new_v4().to_string());
-
+        
         if let Some(ref client) = self.qdrant_client {
             let mut payload: HashMap<String, qdrant_client::qdrant::Value> = metadata
                 .into_iter()
                 .map(|(k, v)| (k, qdrant_client::qdrant::Value::from(v)))
                 .collect();
-
-            payload.insert(
-                "text".to_string(),
-                qdrant_client::qdrant::Value::from(text.to_string()),
+            
+            payload.insert("text".to_string(), qdrant_client::qdrant::Value::from(text.to_string()));
+            
+            let point = PointStruct::new(
+                point_id.clone(),
+                vector,
+                payload,
             );
-
-            let point = PointStruct::new(point_id.clone(), vector, payload);
-
-            let upsert_points = qdrant_client::qdrant::UpsertPoints {
-                collection_name: self.config.collection_name.clone(),
-                points: vec![point],
-                ..Default::default()
-            };
-
+            
             client
-                .upsert_points(upsert_points)
+                .upsert_points(
+                    &self.config.collection_name,
+                    None,
+                    vec![point],
+                    None,
+                )
                 .await
                 .map_err(|e| VectorIndexError::QdrantError(e.to_string()))?;
         }
-
+        
         Ok(point_id)
     }
 
@@ -192,7 +192,7 @@ impl VectorIndex {
         limit: usize,
     ) -> Result<Vec<SearchResult>, VectorIndexError> {
         let query_vector = self.embed_text(query).await?;
-
+        
         if let Some(ref client) = self.qdrant_client {
             let search_points = SearchPoints {
                 collection_name: self.config.collection_name.clone(),
@@ -203,12 +203,12 @@ impl VectorIndex {
                 }),
                 ..Default::default()
             };
-
+            
             let search_result = client
-                .search_points(search_points)
+                .search_points(&search_points)
                 .await
                 .map_err(|e| VectorIndexError::QdrantError(e.to_string()))?;
-
+            
             let results = search_result
                 .result
                 .into_iter()
@@ -219,14 +219,14 @@ impl VectorIndex {
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string())
                         .unwrap_or_default();
-
+                    
                     let metadata: HashMap<String, String> = point
                         .payload
                         .into_iter()
                         .filter(|(k, _)| k != "text")
                         .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
                         .collect();
-
+                    
                     SearchResult {
                         id: point.id.unwrap().to_string(),
                         score: point.score,
@@ -235,7 +235,7 @@ impl VectorIndex {
                     }
                 })
                 .collect();
-
+            
             Ok(results)
         } else {
             Ok(vec![])
@@ -245,26 +245,29 @@ impl VectorIndex {
     /// Delete a vector by ID
     pub async fn delete(&self, id: &str) -> Result<(), VectorIndexError> {
         if let Some(ref client) = self.qdrant_client {
-            let delete_points = DeletePoints {
-                collection_name: self.config.collection_name.clone(),
-                points: Some(qdrant_client::qdrant::PointsSelector {
-                    points_selector: Some(
-                        qdrant_client::qdrant::points_selector::PointsSelector::Points(
-                            qdrant_client::qdrant::PointsIdsList {
-                                ids: vec![id.into()],
-                            },
-                        ),
+            use qdrant_client::qdrant::PointsSelector;
+            
+            let points_selector = PointsSelector {
+                points_selector_one_of: Some(
+                    qdrant_client::qdrant::points_selector::PointsSelectorOneOf::Points(
+                        qdrant_client::qdrant::PointsIdsList {
+                            ids: vec![id.into()],
+                        },
                     ),
-                }),
-                ..Default::default()
+                ),
             };
-
+            
             client
-                .delete_points(delete_points)
+                .delete_points(
+                    &self.config.collection_name,
+                    None,
+                    &points_selector,
+                    None,
+                )
                 .await
                 .map_err(|e| VectorIndexError::QdrantError(e.to_string()))?;
         }
-
+        
         Ok(())
     }
 }
